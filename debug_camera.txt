@@ -1,0 +1,6 @@
+Modelo                         Porta           
+----------------------------------------------------------
+Canon EOS 1200D                usb:002,008     
+Novo arquivo está localizado em /capt0000.jpg na câmera
+Salvando arquivo como /opt/Totem/temp/foto_1763849706.jpg
+Excluindo o arquivo /capt0000.jpg na câmera
