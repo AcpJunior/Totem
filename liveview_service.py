@@ -13,19 +13,21 @@ class LiveviewService:
         self.cap = None
     
     def start_liveview(self, video_label, status_callback):
-        """Inicia liveview - FUNCIONANDO"""
         if self.running:
             return False, "Já está em execução"
         
         self.running = True
         
-        # Decide qual câmera usar
-        if self.config['liveview_fonte'] == 'camera_externa' and self.config['camera_liveview']:
-            camera_config = self.config['camera_liveview']
+        # Relê a config para garantir que pegou a última alteração
+        self.config = self.config_manager.config
+        
+        if self.config.get('liveview_fonte') == 'camera_externa':
+            camera_config = self.config.get('camera_liveview', '')
         else:
-            camera_config = self.config['camera_principal']
+            camera_config = self.config.get('camera_principal', '')
         
         device_num = self._get_webcam_device(camera_config)
+        print(f"Iniciando Liveview na câmera index: {device_num} (Config: {camera_config})")
         
         self.thread = threading.Thread(
             target=self._liveview_loop,
@@ -37,7 +39,6 @@ class LiveviewService:
         return True, "Liveview iniciado"
     
     def stop_liveview(self):
-        """Para o liveview"""
         self.running = False
         if self.cap:
             self.cap.release()
@@ -47,15 +48,17 @@ class LiveviewService:
             self.thread.join(timeout=2)
     
     def _liveview_loop(self, device_num, video_label, status_callback):
-        """Loop principal do liveview - FUNCIONANDO"""
-        # Encontra webcam funcionando
+        def safe_status(msg):
+             if hasattr(video_label, 'after'):
+                 video_label.after(0, lambda: status_callback(msg))
+        
         self.cap = self._find_working_webcam(device_num)
         if not self.cap:
-            status_callback("❌ Nenhuma webcam encontrada")
+            safe_status("❌ Nenhuma webcam encontrada")
             self.running = False
             return
         
-        status_callback("✅ Liveview ativo - Procurando câmera...")
+        safe_status("✅ Liveview ativo - Iniciando...")
         
         frame_count = 0
         start_time = time.time()
@@ -66,79 +69,98 @@ class LiveviewService:
                 if ret and frame is not None:
                     frame_count += 1
                     
-                    # Converte BGR para RGB
                     frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     
-                    # Redimensiona para o label
-                    label_width = video_label.winfo_width()
-                    label_height = video_label.winfo_height()
+                    def update_ui_frame(f_rgb):
+                        if not self.running: return
+                        try:
+                            l_w = video_label.winfo_width()
+                            l_h = video_label.winfo_height()
+                            
+                            if l_w > 10 and l_h > 10:
+                                h, w = f_rgb.shape[:2]
+                                ratio = min(l_w/w, l_h/h)
+                                new_w, new_h = int(w * ratio), int(h * ratio)
+                                frame_resized = cv2.resize(f_rgb, (new_w, new_h))
+                            else:
+                                frame_resized = cv2.resize(f_rgb, (640, 480))
+                            
+                            img = Image.fromarray(frame_resized)
+                            imgtk = ImageTk.PhotoImage(image=img)
+                            
+                            video_label.imgtk = imgtk
+                            video_label.configure(image=imgtk)
+                        except: pass
+
+                    if hasattr(video_label, 'after'):
+                        video_label.after(0, update_ui_frame, frame_rgb)
                     
-                    if label_width > 10 and label_height > 10:
-                        h, w = frame_rgb.shape[:2]
-                        ratio = min(label_width/w, label_height/h)
-                        new_w = int(w * ratio)
-                        new_h = int(h * ratio)
-                        frame_resized = cv2.resize(frame_rgb, (new_w, new_h))
-                    else:
-                        frame_resized = cv2.resize(frame_rgb, (640, 480))
-                    
-                    # Converte para ImageTk
-                    img = Image.fromarray(frame_resized)
-                    imgtk = ImageTk.PhotoImage(image=img)
-                    
-                    # Atualiza interface
-                    video_label.imgtk = imgtk
-                    video_label.configure(image=imgtk)
-                    
-                    # Atualiza status com FPS
                     current_time = time.time()
                     if current_time - start_time >= 1:
                         fps = frame_count / (current_time - start_time)
-                        status_callback(f"✅ Liveview ativo - {fps:.1f} FPS")
+                        # safe_status(f"✅ Liveview ({fps:.1f} FPS)") # Comentado para não spammar texto
                         frame_count = 0
                         start_time = current_time
                         
                 else:
-                    status_callback("❌ Erro ao capturar frame")
-                    break
+                    safe_status("❌ Erro frame")
+                    time.sleep(0.5)
+                    # Tenta recuperar
+                    self.cap.release()
+                    self.cap = cv2.VideoCapture(device_num)
                     
             except Exception as e:
                 print(f"Erro liveview: {e}")
-                status_callback("❌ Erro no liveview")
                 break
             
-            time.sleep(0.033)  # ~30 FPS
+            time.sleep(0.033)
         
         if self.cap:
             self.cap.release()
             self.cap = None
         
-        status_callback("⏹️ Liveview finalizado")
+        safe_status("⏹️ Parado")
         self.running = False
     
-    def _find_working_webcam(self, start_device):
-        """Encontra webcam funcionando"""
-        for i in range(max(0, start_device-1), start_device + 3):
-            cap = cv2.VideoCapture(i)
-            if cap.isOpened():
-                ret, frame = cap.read()
-                if ret and frame is not None:
-                    # Configura
-                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-                    cap.set(cv2.CAP_PROP_FPS, 30)
-                    print(f"✅ Webcam encontrada: /dev/video{i}")
-                    return cap
-                else:
-                    cap.release()
-            else:
-                cap.release()
+    def _find_working_webcam(self, target_device):
+        """
+        Tenta abrir PRIMEIRO o dispositivo alvo.
+        Só tenta outros se o alvo falhar.
+        """
+        candidates = [target_device]
+        # Adiciona vizinhos como fallback (opcional, remova se quiser rigidez total)
+        candidates.extend([d for d in range(0, 10) if d != target_device])
+        
+        for i in candidates:
+            if i < 0: continue
+            try:
+                cap = cv2.VideoCapture(i)
+                if cap.isOpened():
+                    ret, frame = cap.read()
+                    if ret and frame is not None:
+                        # Configurações ideais
+                        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+                        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+                        cap.set(cv2.CAP_PROP_FPS, 30)
+                        print(f"✅ Webcam aberta com sucesso: /dev/video{i}")
+                        
+                        # Se abriu uma que NÃO é a alvo, avisa no log
+                        if i != target_device:
+                            print(f"⚠️ AVISO: Câmera alvo {target_device} falhou. Usando {i}.")
+                            
+                        return cap
+                    else: cap.release()
+            except: pass
+            
+            # Se falhou a câmera alvo e estamos na primeira tentativa, imprime erro
+            if i == target_device:
+                print(f"❌ Falha ao abrir câmera alvo: /dev/video{i}")
+
         return None
     
     def _get_webcam_device(self, camera_config):
-        """Obtém dispositivo da webcam"""
+        if not camera_config: return 0
         if '/dev/video' in camera_config:
             match = re.search(r'/dev/video(\d+)', camera_config)
-            if match:
-                return int(match.group(1))
+            if match: return int(match.group(1))
         return 0

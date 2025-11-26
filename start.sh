@@ -2,7 +2,7 @@
 # Script de inicialização do Totem de Fotos - /opt/Totem/
 
 echo "=========================================="
-echo "  Iniciando Totem de Fotos"
+echo "  Iniciando Totem de Fotos (VENV)"
 echo "  Diretório: /opt/Totem/"
 echo "  Data: $(date)"
 echo "=========================================="
@@ -13,28 +13,32 @@ cd /opt/Totem
 # Verificar se o arquivo main.py existe
 if [ ! -f "main.py" ]; then
     echo "ERRO: Arquivo main.py não encontrado em /opt/Totem/"
-    echo "Verifique se o arquivo foi copiado corretamente."
     exit 1
 fi
 
-# Verificar se o Python está instalado
-if ! command -v python3 &> /dev/null; then
-    echo "ERRO: Python3 não está instalado"
-    echo "Instale com: sudo apt install python3"
-    exit 1
+# 1. Verifica se o VENV existe e tenta recuperar se não existir
+if [ ! -d "venv" ]; then
+    echo "⚠️ Ambiente virtual não encontrado. Criando..."
+    sudo apt install -y python3-venv
+    python3 -m venv --system-site-packages venv
+    echo "📦 Instalando dependências..."
+    ./venv/bin/pip install selenium webdriver-manager
 fi
 
-# Verificar permissões
+# Ajustar permissões
 if [ ! -r "main.py" ]; then
-    echo "Ajustando permissões..."
     sudo chmod +r main.py
 fi
+
+# Libera acesso ao Xhost (importante para o Chrome abrir a tela gráfica)
+xhost +local: > /dev/null 2>&1
 
 echo "Executando o totem de fotos..."
 echo "Pressione Ctrl+C no terminal para parar ou ESC no aplicativo"
 
-# Executar o aplicativo Python
-sudo python3 main.py
+# --- AQUI ESTÁ O SEGREDO ---
+# Usa o ./venv/bin/python3 em vez de apenas python3
+sudo ./venv/bin/python3 main.py
 
 echo "=========================================="
 echo "  Totem de Fotos finalizado"
